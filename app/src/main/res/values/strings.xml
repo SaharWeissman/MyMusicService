@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">MyMusicService</string>
+    <string name="btn_choose_file">Choose file</string>
+    <string name="edTxt_file_uri_default">no file chosen</string>
 </resources>
