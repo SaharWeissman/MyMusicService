@@ -1,5 +1,8 @@
 package com.saharw.musicservice
 
+import android.app.Activity
+import android.app.Notification
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.media.AudioAttributes
@@ -11,6 +14,8 @@ import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
+import com.saharw.mymusicplayer.entities.data.base.MediaItem
+import java.io.File
 
 
 class MusicService : Service(),
@@ -18,12 +23,17 @@ class MusicService : Service(),
         MediaPlayer.OnErrorListener,
         MediaPlayer.OnCompletionListener {
 
+    private val Playing: CharSequence = "Playing"
+
     private val TAG = "MusicService"
     lateinit var mPlayer : MediaPlayer
     var mSongOffset : Int = 0
     val mBinder = MusicBinder()
     var mSongIdx = 0
-    lateinit var mSongsUrisList : List<Uri>
+    lateinit var mSongsList: List<MediaItem>
+    lateinit var mActivity: Activity
+    private var mSongTitle: CharSequence = "Empty"
+    private val NOTIFICATION_ID: Int = 1
 
     override fun onCreate() {
         Log.d(TAG, "onCreate")
@@ -48,16 +58,18 @@ class MusicService : Service(),
         Log.d(TAG, "play: mSongIdx = $mSongIdx")
         mPlayer.reset()
         try{
-            mPlayer.setDataSource(applicationContext, mSongsUrisList[mSongIdx])
+            val mediaItem = mSongsList[mSongIdx]
+            mSongTitle = mediaItem.name
+            mPlayer.setDataSource(applicationContext, Uri.fromFile(File(mediaItem.dataPath)))
             mPlayer.prepareAsync()
         }catch (t: Throwable){
             Log.e(TAG, "play: error setting data source for song pos: $mSongIdx", t)
         }
     }
 
-    fun setSongsUris(songsUrisList: List<Uri>) {
+    fun setSongsUris(songsList: List<MediaItem>) {
         Log.d(TAG, "setSongsUris")
-        this.mSongsUrisList = songsUrisList
+        this.mSongsList = songsList
     }
 
     fun setSong(idx: Int){
@@ -70,7 +82,7 @@ class MusicService : Service(),
         mSongIdx--
 
         // cyclic behavior
-        if(mSongIdx < 0) mSongIdx = mSongsUrisList.size-1
+        if(mSongIdx < 0) mSongIdx = mSongsList.size-1
         play()
     }
 
@@ -79,7 +91,7 @@ class MusicService : Service(),
         mSongIdx++
 
         // cyclic behavior
-        if(mSongIdx >= mSongsUrisList.size) mSongIdx 0
+        if(mSongIdx >= mSongsList.size) mSongIdx = 0
         play()
     }
 
@@ -110,16 +122,32 @@ class MusicService : Service(),
         mPlayer.seekTo(position)
     }
 
-    fun go() {
-        Log.d(TAG, "go")
+    fun start() {
+        Log.d(TAG, "start")
         mPlayer.start()
     }
 
     // Media player callbacks
     override fun onPrepared(mp: MediaPlayer?) {
-        Log.d(TAG, "onPrepared: start playing song : ${mSongsUrisList[mSongIdx]}")
+        Log.d(TAG, "onPrepared: start playing song : ${mSongsList[mSongIdx]}")
         if(mp != null) {
             mp.start()
+
+            // create pending intent (for starting activity from notification) & add notification
+            var intent = Intent(this@MusicService, mActivity::class.java)
+            intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            var pendingIntent = PendingIntent.getActivity(this@MusicService, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT)
+
+            var notificationBuilder = Notification.Builder(this@MusicService)
+            notificationBuilder.setContentIntent(pendingIntent)
+                .setSmallIcon(R.drawable.ic_play)
+                .setTicker(mSongTitle)
+                .setOngoing(true)
+                .setContentTitle(Playing)
+                .setContentText(mSongTitle)
+            
+            startForeground(NOTIFICATION_ID, notificationBuilder.build())
+
         }else {
             Log.e(TAG, "onPrepared: player is null!")
         }
@@ -127,11 +155,22 @@ class MusicService : Service(),
 
     override fun onError(mp: MediaPlayer?, what: Int, extra: Int): Boolean {
         Log.e(TAG, "onError: mp = $mp, what = $what, extra = $extra, currSongIdx = ${mSongIdx}")
+        mPlayer.reset()
         return false
     }
 
     override fun onCompletion(mp: MediaPlayer?) {
         Log.d(TAG, "onCompletion: curSongIdx = $mSongIdx")
+        if(mPlayer.currentPosition > 0){
+            mPlayer.reset()
+            playNext()
+        }
+    }
+
+    override fun onDestroy() {
+        Log.d(TAG, "onDestroy")
+        super.onDestroy()
+        stopForeground(true)
     }
 
     private fun initMusicPlayer() {
@@ -162,8 +201,9 @@ class MusicService : Service(),
 
     // for binding to service
     inner class MusicBinder : Binder() {
-        fun getService() : MusicService {
+        fun getService(activity: Activity) : MusicService {
             Log.d(TAG, "getService")
+            this@MusicService.mActivity = activity
             return this@MusicService
         }
     }
